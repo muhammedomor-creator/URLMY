@@ -1,3 +1,4 @@
+
 "use client";
 import { useState, useEffect } from "react";
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -32,7 +33,7 @@ export default function Home() {
   // ইউআরএল শর্টনার স্টেট
   const [url, setUrl] = useState("");
   const [customSlug, setCustomSlug] = useState("");
-  const [linkNote, setLinkNote] = useState(""); // মনে রাখার নোট
+  const [linkNote, setLinkNote] = useState(""); 
   const [shortUrl, setShortUrl] = useState("");
   
   // ড্যাশবোর্ড ও হিস্টোরি স্টেট
@@ -45,11 +46,11 @@ export default function Home() {
   
   // ওটিপি ভেরিফিকেশন মেমোরি
   const [generatedOtp, setGeneratedOtp] = useState("");
-  const [otpPurpose, setOtpPurpose] = useState(""); // 'register' | 'forgot'
+  const [otpPurpose, setOtpPurpose] = useState(""); 
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [tempNoteText, setTempNoteText] = useState("");
 
-  // সেশন এবং রিডাইরেকশন হ্যান্ডলিং
+  // ১. সেশন এবং রিডাইরেকশন হ্যান্ডলিং
   useEffect(() => {
     const path = window.location.pathname.replace("/", "");
     
@@ -81,7 +82,29 @@ export default function Home() {
     }
   }, []);
 
-  // ড্যাশবোর্ড ডাটা লোড
+  // ২. ফোন নম্বর স্ট্যান্ডার্ডাইজেশন (১০১% নিখুঁত ফরম্যাটিং)
+  // এটি যেকোনো ফরম্যাট থেকে ১১ ডিজিটের স্ট্যান্ডার্ড '01XXXXXXXXX' বের করবে
+  const cleanBDPhone = (phone) => {
+    let cleaned = phone.replace(/\D/g, ""); // সব নন-ডিজিট ক্যারেক্টার মুছে ফেলা
+    
+    // যদি নম্বরটি ৮৮০ দিয়ে শুরু হয় এবং মোট ১৩ ডিজিট হয়
+    if (cleaned.startsWith("880") && cleaned.length === 13) {
+      cleaned = cleaned.substring(2);
+    }
+    // যদি নম্বরটি ০ ছাড়া শুধু ১ দিয়ে শুরু হয় এবং ১০ ডিজিট হয়
+    if (!cleaned.startsWith("0") && cleaned.length === 10) {
+      cleaned = "0" + cleaned;
+    }
+    return cleaned;
+  };
+
+  // এপিআই-এর জন্য '8801XXXXXXXXX' ফরম্যাট জেনারেট করা
+  const getOtpFormattedPhone = (phone) => {
+    const standard = cleanBDPhone(phone);
+    return "88" + standard;
+  };
+
+  // ৩. ড্যাশবোর্ড ডাটা লোড
   const fetchUserLinks = async (phone) => {
     try {
       const querySnapshot = await getDocs(collection(db, "links"));
@@ -99,21 +122,19 @@ export default function Home() {
     }
   };
 
-  // হোয়াটসঅ্যাপ এপিআই-এর মাধ্যমে ওটিপি পাঠানো
+  // ৪. হোয়াটসঅ্যাপ এপিআই-এর মাধ্যমে ওটিপি পাঠানো (টেস্টারের লজিক অনুযায়ী)
   const sendWhatsAppOTP = async (targetPhone, code) => {
     try {
-      // ফোন নম্বরের ফরম্যাট ঠিক করা (বাংলাদেশের কান্ট্রি কোড সহ)
-      let formattedPhone = targetPhone.trim();
-      if (formattedPhone.startsWith("0")) {
-        formattedPhone = "88" + formattedPhone;
-      } else if (!formattedPhone.startsWith("88")) {
-        formattedPhone = "88" + formattedPhone;
-      }
+      // এপিআই-এর জন্য সঠিক ১৩ ডিজিট ফরম্যাট (যেমন: 8801572922663)
+      const formattedPhone = getOtpFormattedPhone(targetPhone);
+      
+      console.log("Sending OTP to:", formattedPhone, "with code:", code);
 
-      // আপনার দেওয়া index.html ফাইলের এন্ডপয়েন্ট ও প্যারামিটার ব্যবহার করা হয়েছে
       const response = await fetch("https://otp-api-hmrz.onrender.com/send-otp", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json" 
+        },
         body: JSON.stringify({
           phoneNumber: formattedPhone,
           otpCode: code
@@ -127,13 +148,14 @@ export default function Home() {
     }
   };
 
-  // বাংলাদেশী মোবাইল নম্বর যাচাই
+  // মোবাইল নম্বর সঠিক কি না পরীক্ষা করা
   const isValidBDPhone = (phone) => {
-    const regex = /^(?:\+88|88)?(01[3-9]\d{8})$/;
-    return regex.test(phone);
+    const standard = cleanBDPhone(phone);
+    const regex = /^(01[3-9]\d{8})$/;
+    return regex.test(standard);
   };
 
-  // রেজিস্ট্রেশন সাবমিট
+  // ৫. রেজিস্ট্রেশন সাবমিট ও ওটিপি ট্র্রিগার
   const handleRegisterSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -155,9 +177,11 @@ export default function Home() {
     }
 
     setLoading(true);
+    const standardizedPhone = cleanBDPhone(phoneInput);
 
     try {
-      const userRef = doc(db, "users", phoneInput.trim());
+      // ফায়ারস্টোরে স্ট্যান্ডার্ড নাম্বারে চেক করা হচ্ছে
+      const userRef = doc(db, "users", standardizedPhone);
       const userSnap = await getDoc(userRef);
 
       if (userSnap.exists()) {
@@ -166,17 +190,17 @@ export default function Home() {
         return;
       }
 
-      // ৬ ডিজিটের ওটিপি তৈরি করা
+      // ৬ ডিজিটের ওটিপি তৈরি
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
       setGeneratedOtp(otpCode);
       setOtpPurpose("register");
 
-      const otpSent = await sendWhatsAppOTP(phoneInput, otpCode);
+      const otpSent = await sendWhatsAppOTP(standardizedPhone, otpCode);
       if (otpSent) {
         setSuccess("আপনার হোয়াটসঅ্যাপ নম্বরে ৬ ডিজিটের কোড পাঠানো হয়েছে।");
         setCurrentScreen("verify");
       } else {
-        setError("ওটিপি পাঠাতে ব্যর্থ হয়েছে। অনুগ্রহ করে নম্বরটি ভালো করে চেক করুন।");
+        setError("ওটিপি পাঠাতে ব্যর্থ হয়েছে। অনুগ্রহ করে আপনার নম্বরটি ভালো করে চেক করুন।");
       }
     } catch (err) {
       setError("রেজিস্ট্রেশন প্রক্রিয়ায় সমস্যা হয়েছে।");
@@ -185,7 +209,7 @@ export default function Home() {
     }
   };
 
-  // ওটিপি কোড ভেরিফিকেশন
+  // ৬. ওটিপি কোড ভেরিফিকেশন ও আইডি তৈরি সম্পন্ন করা
   const handleOtpVerify = async (e) => {
     e.preventDefault();
     setError("");
@@ -197,20 +221,21 @@ export default function Home() {
     }
 
     setLoading(true);
+    const standardizedPhone = cleanBDPhone(phoneInput);
 
     try {
       if (otpPurpose === "register") {
-        await setDoc(doc(db, "users", phoneInput.trim()), {
-          phone: phoneInput.trim(),
+        await setDoc(doc(db, "users", standardizedPhone), {
+          phone: standardizedPhone,
           password: passwordInput,
           createdAt: new Date().toISOString()
         });
 
-        localStorage.setItem("url_user_phone", phoneInput.trim());
-        setUserPhone(phoneInput.trim());
+        localStorage.setItem("url_user_phone", standardizedPhone);
+        setUserPhone(standardizedPhone);
         setSuccess("আপনার আইডি সফলভাবে তৈরি হয়েছে!");
         setCurrentScreen("dashboard");
-        fetchUserLinks(phoneInput.trim());
+        fetchUserLinks(standardizedPhone);
       } else if (otpPurpose === "forgot") {
         setCurrentScreen("reset_password");
       }
@@ -221,15 +246,16 @@ export default function Home() {
     }
   };
 
-  // লগইন হ্যান্ডলার
+  // ৭. লগইন হ্যান্ডলার
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
     setSuccess("");
     setLoading(true);
+    const standardizedPhone = cleanBDPhone(phoneInput);
 
     try {
-      const userRef = doc(db, "users", phoneInput.trim());
+      const userRef = doc(db, "users", standardizedPhone);
       const userSnap = await getDoc(userRef);
 
       if (!userSnap.exists() || userSnap.data().password !== passwordInput) {
@@ -238,11 +264,11 @@ export default function Home() {
         return;
       }
 
-      localStorage.setItem("url_user_phone", phoneInput.trim());
-      setUserPhone(phoneInput.trim());
+      localStorage.setItem("url_user_phone", standardizedPhone);
+      setUserPhone(standardizedPhone);
       setSuccess("সফলভাবে লগইন করা হয়েছে!");
       setCurrentScreen("dashboard");
-      fetchUserLinks(phoneInput.trim());
+      fetchUserLinks(standardizedPhone);
     } catch (err) {
       setError("লগইন করতে সমস্যা হয়েছে।");
     } finally {
@@ -250,7 +276,7 @@ export default function Home() {
     }
   };
 
-  // ফরগেট পাসওয়ার্ড ওটিপি
+  // ৮. পাসওয়ার্ড ভুলে গেলে ওটিপি পাঠানো
   const handleForgotPassword = async (e) => {
     e.preventDefault();
     setError("");
@@ -262,9 +288,10 @@ export default function Home() {
     }
 
     setLoading(true);
+    const standardizedPhone = cleanBDPhone(phoneInput);
 
     try {
-      const userRef = doc(db, "users", phoneInput.trim());
+      const userRef = doc(db, "users", standardizedPhone);
       const userSnap = await getDoc(userRef);
 
       if (!userSnap.exists()) {
@@ -277,7 +304,7 @@ export default function Home() {
       setGeneratedOtp(otpCode);
       setOtpPurpose("forgot");
 
-      const otpSent = await sendWhatsAppOTP(phoneInput, otpCode);
+      const otpSent = await sendWhatsAppOTP(standardizedPhone, otpCode);
       if (otpSent) {
         setSuccess("পাসওয়ার্ড রিসেট করার জন্য হোয়াটসঅ্যাপে কোড পাঠানো হয়েছে।");
         setCurrentScreen("verify");
@@ -291,7 +318,7 @@ export default function Home() {
     }
   };
 
-  // পাসওয়ার্ড রিসেট
+  // ৯. নতুন পাসওয়ার্ড সেভ করা
   const handlePasswordReset = async (e) => {
     e.preventDefault();
     setError("");
@@ -303,9 +330,10 @@ export default function Home() {
     }
 
     setLoading(true);
+    const standardizedPhone = cleanBDPhone(phoneInput);
 
     try {
-      const userRef = doc(db, "users", phoneInput.trim());
+      const userRef = doc(db, "users", standardizedPhone);
       await updateDoc(userRef, {
         password: resetPasswordInput
       });
@@ -320,7 +348,7 @@ export default function Home() {
     }
   };
 
-  // লিংক তৈরি
+  // ১০. লিংক ছোট করা
   const handleCreateShortLink = async (e) => {
     e.preventDefault();
     setError("");
@@ -365,7 +393,7 @@ export default function Home() {
     }
   };
 
-  // ট্যাগ/নোট এডিট
+  // ১১. সরাসরি নোট পরিবর্তন করা
   const handleUpdateNote = async (linkId) => {
     try {
       const docRef = doc(db, "links", linkId);
@@ -379,7 +407,7 @@ export default function Home() {
     }
   };
 
-  // লিংক ডিলিট
+  // ১২. লিংক ডিলিট
   const handleDeleteLink = async (linkId) => {
     if (confirm("আপনি কি নিশ্চিতভাবে এই শর্ট লিংকটি ডিলিট করতে চান?")) {
       try {
@@ -391,14 +419,14 @@ export default function Home() {
     }
   };
 
-  // কপি টু ক্লিপবোর্ড
+  // ১৩. কপি টু ক্লিপবোর্ড
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // লগআউট
+  // ১৪. লগআউট
   const handleLogout = () => {
     localStorage.removeItem("url_user_phone");
     setUserPhone("");
@@ -422,7 +450,7 @@ export default function Home() {
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", fontFamily: "system-ui, sans-serif", boxSizing: "border-box", color: "#f8fafc" }}>
       
-      {/* ১. লগইন স্ক্রিন */}
+      {/* লগইন স্ক্রিন */}
       {currentScreen === "login" && (
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
@@ -470,7 +498,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* ২. রেজিস্ট্রেশন স্ক্রিন */}
+      {/* রেজিস্ট্রেশন স্ক্রিন */}
       {currentScreen === "register" && (
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
@@ -529,7 +557,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* ৩. ওটিপি ভেরিফিকেশন স্ক্রিন */}
+      {/* ওটিপি ভেরিফিকেশন স্ক্রিন */}
       {currentScreen === "verify" && (
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
@@ -561,12 +589,12 @@ export default function Home() {
         </div>
       )}
 
-      {/* ৪. পাসওয়ার্ড ভুলে যাওয়ার স্ক্রিন */}
+      {/* পাসওয়ার্ড ভুলে যাওয়ার স্ক্রিন */}
       {currentScreen === "forgot" && (
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
             <span style={{ fontSize: "40px" }}>🔍</span>
-            <h2 style={{ margin: "12px 0 6px 0", fontSize: "24px", fontWeight: "700" }}>পাসওয়ার্ডরিসেট</h2>
+            <h2 style={{ margin: "12px 0 6px 0", fontSize: "24px", fontWeight: "700" }}>পাসওয়ার্ড রিসেট</h2>
             <p style={{ margin: "0", color: "#94a3b8", fontSize: "14px" }}>আপনার নিবন্ধিত হোয়াটসঅ্যাপ নম্বরে আমরা পাসওয়ার্ড পরিবর্তন কোড পাঠাবো।</p>
           </div>
 
@@ -596,7 +624,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* ৫. নতুন পাসওয়ার্ড সেট করার স্ক্রিন */}
+      {/* নতুন পাসওয়ার্ড সেট করার স্ক্রিন */}
       {currentScreen === "reset_password" && (
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
@@ -627,7 +655,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* ৬. প্রধান ড্যাশবোর্ড ও হিস্টোরি স্ক্রিন */}
+      {/* প্রধান ড্যাশবোর্ড ও হিস্টোরি স্ক্রিন */}
       {currentScreen === "dashboard" && (
         <div style={{ maxWidth: "900px", width: "100%", display: "flex", flexDirection: "column", gap: "24px" }}>
           
@@ -670,7 +698,7 @@ export default function Home() {
                       <label style={{ display: "block", marginBottom: "6px", fontSize: "14px", color: "#cbd5e1" }}>কাস্টম নাম (ঐচ্ছিক)</label>
                       <input
                         type="text"
-                        placeholder="যেমন: facebook-link"
+                        placeholder="facebook-link"
                         value={customSlug}
                         onChange={(e) => setCustomSlug(e.target.value)}
                         style={{ width: "100%", padding: "12px", backgroundColor: "rgba(15, 23, 42, 0.6)", border: "1px solid #334155", borderRadius: "10px", color: "white", fontSize: "15px", boxSizing: "border-box" }}
