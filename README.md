@@ -30,7 +30,7 @@
 আপনার লোকাল কম্পিউটারে প্রজেক্টটি রান করতে নিচের ধাপগুলো অনুসরণ করুন:
 ১. **ডিপোজিটরি ক্লোন করুন:**
 ```bash
-git clone [https://github.com/](https://github.com/) can-replace-this/repo-name.git
+git clone [https://github.com/can-replace-this/repo-name.git](https://github.com/can-replace-this/repo-name.git)
 cd repo-name
 
 ```
