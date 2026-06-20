@@ -4,7 +4,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc, collection, getDocs, updateDoc, deleteDoc } from "firebase/firestore";
 import { nanoid } from "nanoid";
 
-// ফায়ারবেস কনফিগারেশন (এনভায়রনমেন্ট ভ্যারিয়েবল থেকে লোড হবে)
+// ফায়ারবেস কনফিগারেশন
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
@@ -19,7 +19,7 @@ const db = getFirestore(app);
 
 export default function Home() {
   // নেভিগেশন ও স্ক্রিন কন্ট্রোল
-  const [currentScreen, setCurrentScreen] = useState("login"); // 'login' | 'register' | 'forgot' | 'verify' | 'dashboard'
+  const [currentScreen, setCurrentScreen] = useState("login"); // 'login' | 'register' | 'forgot' | 'verify' | 'reset_password' | 'dashboard'
   const [userPhone, setUserPhone] = useState("");
   
   // ফর্ম ইনপুট স্টেট
@@ -32,7 +32,7 @@ export default function Home() {
   // ইউআরএল শর্টনার স্টেট
   const [url, setUrl] = useState("");
   const [customSlug, setCustomSlug] = useState("");
-  const [linkNote, setLinkNote] = useState(""); // কোন লিংকটি কি জন্য তা মনে রাখার নোট
+  const [linkNote, setLinkNote] = useState(""); // মনে রাখার নোট
   const [shortUrl, setShortUrl] = useState("");
   
   // ড্যাশবোর্ড ও হিস্টোরি স্টেট
@@ -43,17 +43,16 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
   
-  // ওটিপি ভেরিফিকেশন সিস্টেম মেমোরি
+  // ওটিপি ভেরিফিকেশন মেমোরি
   const [generatedOtp, setGeneratedOtp] = useState("");
   const [otpPurpose, setOtpPurpose] = useState(""); // 'register' | 'forgot'
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [tempNoteText, setTempNoteText] = useState("");
 
-  // ১. সেশন এবং রিডাইরেকশন হ্যান্ডলিং
+  // সেশন এবং রিডাইরেকশন হ্যান্ডলিং
   useEffect(() => {
     const path = window.location.pathname.replace("/", "");
     
-    // যদি কেউ শর্ট লিংকে ভিজিট করে, তবে সাথে সাথে রিডাইরেক্ট করা হবে
     if (path && path !== "") {
       setIsRedirecting(true);
       const handleRedirect = async () => {
@@ -73,7 +72,6 @@ export default function Home() {
       };
       handleRedirect();
     } else {
-      // লোকাল স্টোরেজ থেকে সেশন চেক করা
       const savedSession = localStorage.getItem("url_user_phone");
       if (savedSession) {
         setUserPhone(savedSession);
@@ -83,7 +81,7 @@ export default function Home() {
     }
   }, []);
 
-  // ২. ব্যবহারকারীর লিংক হিস্টোরি নিয়ে আসা
+  // ড্যাশবোর্ড ডাটা লোড
   const fetchUserLinks = async (phone) => {
     try {
       const querySnapshot = await getDocs(collection(db, "links"));
@@ -94,18 +92,17 @@ export default function Home() {
           allLinks.push({ id: doc.id, ...data });
         }
       });
-      // নতুন লিংকগুলো তালিকার প্রথমে দেখানোর জন্য সর্ট করা
       allLinks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       setUserLinks(allLinks);
     } catch (err) {
-      console.error("হিস্টোরি লোড করতে ব্যর্থ:", err);
+      console.error("হিস্টোরি লোড করা যায়নি:", err);
     }
   };
 
-  // ৩. হোয়াটসঅ্যাপ এপিআই-এর মাধ্যমে ওটিপি পাঠানো
+  // হোয়াটসঅ্যাপ এপিআই-এর মাধ্যমে ওটিপি পাঠানো
   const sendWhatsAppOTP = async (targetPhone, code) => {
     try {
-      // বাংলাদেশের মোবাইল নম্বর ফরম্যাট ঠিক করা (যেমন: ০১৭... থেকে +৮৮০১৭...)
+      // ফোন নম্বরের ফরম্যাট ঠিক করা (বাংলাদেশের কান্ট্রি কোড সহ)
       let formattedPhone = targetPhone.trim();
       if (formattedPhone.startsWith("0")) {
         formattedPhone = "88" + formattedPhone;
@@ -113,16 +110,13 @@ export default function Home() {
         formattedPhone = "88" + formattedPhone;
       }
 
-      // ব্যবহারকারীর ওটিপি এপিআই কল করা
-      // আমরা JSON বডিতে আপনার API অনুযায়ী স্ট্যান্ডার্ড এবং কাস্টম উভয় প্যারামিটার পাঠিয়ে দিচ্ছি যাতে সফলভাবে ডেলিভারি হয়
-      const response = await fetch("https://otp-api-hmrz.onrender.com/send", {
+      // আপনার দেওয়া index.html ফাইলের এন্ডপয়েন্ট ও প্যারামিটার ব্যবহার করা হয়েছে
+      const response = await fetch("https://otp-api-hmrz.onrender.com/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          number: formattedPhone,
-          phone: formattedPhone,
-          otp: code,
-          message: `আপনার ইউআরএল শর্টনার আইডির ভেরিফিকেশন কোডটি হলো: ${code}`
+          phoneNumber: formattedPhone,
+          otpCode: code
         })
       });
 
@@ -133,13 +127,13 @@ export default function Home() {
     }
   };
 
-  // ৪. বাংলাদেশী মোবাইল নাম্বার ভ্যালিডেশন
+  // বাংলাদেশী মোবাইল নম্বর যাচাই
   const isValidBDPhone = (phone) => {
     const regex = /^(?:\+88|88)?(01[3-9]\d{8})$/;
     return regex.test(phone);
   };
 
-  // ৫. রেজিস্ট্রেশন ফর্ম সাবমিট (ওটিপি পাঠানো)
+  // রেজিস্ট্রেশন সাবমিট
   const handleRegisterSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -163,7 +157,6 @@ export default function Home() {
     setLoading(true);
 
     try {
-      // ফায়ারস্টোরে চেক করা যে এই নম্বর দিয়ে ইতিমধ্যে আইডি খোলা আছে কি না
       const userRef = doc(db, "users", phoneInput.trim());
       const userSnap = await getDoc(userRef);
 
@@ -173,7 +166,7 @@ export default function Home() {
         return;
       }
 
-      // ৬ ডিজিটের ওটিপি জেনারেট করা
+      // ৬ ডিজিটের ওটিপি তৈরি করা
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
       setGeneratedOtp(otpCode);
       setOtpPurpose("register");
@@ -183,7 +176,7 @@ export default function Home() {
         setSuccess("আপনার হোয়াটসঅ্যাপ নম্বরে ৬ ডিজিটের কোড পাঠানো হয়েছে।");
         setCurrentScreen("verify");
       } else {
-        setError("হোয়াটসঅ্যাপ ওটিপি পাঠাতে ব্যর্থ হয়েছে। অনুগ্রহ করে নম্বরটি চেক করুন।");
+        setError("ওটিপি পাঠাতে ব্যর্থ হয়েছে। অনুগ্রহ করে নম্বরটি ভালো করে চেক করুন।");
       }
     } catch (err) {
       setError("রেজিস্ট্রেশন প্রক্রিয়ায় সমস্যা হয়েছে।");
@@ -192,7 +185,7 @@ export default function Home() {
     }
   };
 
-  // ৬. ওটিপি কোড ভেরিফিকেশন এবং অ্যাকাউন্ট তৈরি সম্পন্ন করা
+  // ওটিপি কোড ভেরিফিকেশন
   const handleOtpVerify = async (e) => {
     e.preventDefault();
     setError("");
@@ -207,10 +200,9 @@ export default function Home() {
 
     try {
       if (otpPurpose === "register") {
-        // নতুন ব্যবহারকারী তৈরি এবং সেভ করা
         await setDoc(doc(db, "users", phoneInput.trim()), {
           phone: phoneInput.trim(),
-          password: passwordInput, // প্রজেক্টের সুবিধার্থে পাসওয়ার্ড সেভ করা হচ্ছে
+          password: passwordInput,
           createdAt: new Date().toISOString()
         });
 
@@ -220,7 +212,6 @@ export default function Home() {
         setCurrentScreen("dashboard");
         fetchUserLinks(phoneInput.trim());
       } else if (otpPurpose === "forgot") {
-        // পাসওয়ার্ড রিসেট স্ক্রিনে নিয়ে যাওয়া
         setCurrentScreen("reset_password");
       }
     } catch (err) {
@@ -230,7 +221,7 @@ export default function Home() {
     }
   };
 
-  // ৭. লগইন হ্যান্ডলিং
+  // লগইন হ্যান্ডলার
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
@@ -259,7 +250,7 @@ export default function Home() {
     }
   };
 
-  // ৮. ফরগেট পাসওয়ার্ড ওটিপি ট্রিগার
+  // ফরগেট পাসওয়ার্ড ওটিপি
   const handleForgotPassword = async (e) => {
     e.preventDefault();
     setError("");
@@ -300,7 +291,7 @@ export default function Home() {
     }
   };
 
-  // ৯. নতুন পাসওয়ার্ড সেট করা
+  // পাসওয়ার্ড রিসেট
   const handlePasswordReset = async (e) => {
     e.preventDefault();
     setError("");
@@ -329,7 +320,7 @@ export default function Home() {
     }
   };
 
-  // ১০. ড্যাশবোর্ডে নতুন লিংক তৈরি করা
+  // লিংক তৈরি
   const handleCreateShortLink = async (e) => {
     e.preventDefault();
     setError("");
@@ -350,16 +341,15 @@ export default function Home() {
       const docSnap = await getDoc(docRef);
 
       if (customSlug && docSnap.exists()) {
-        setError("এই নামটি ইতিমধ্যে অন্য কেউ নিয়ে নিয়েছে! অনুগ্রহ করে অন্য নাম দিন।");
+        setError("এই নামটি ইতিমধ্যে অন্য কেউ নিয়েছে! অনুগ্রহ করে অন্য নাম দিন।");
         setLoading(false);
         return;
       }
 
-      // ফায়ারস্টোরে লিংক সেভ করা হচ্ছে
       await setDoc(docRef, {
         originalUrl: url,
         userId: userPhone,
-        title: linkNote.trim() || "কাস্টম লিংক", // মনে রাখার জন্য ট্যাগ/নোট
+        title: linkNote.trim() || "কাস্টম লিংক",
         createdAt: new Date().toISOString(),
       });
 
@@ -367,7 +357,7 @@ export default function Home() {
       setUrl("");
       setCustomSlug("");
       setLinkNote("");
-      fetchUserLinks(userPhone); // রিফ্রেশ হিস্টোরি তালিকা
+      fetchUserLinks(userPhone);
     } catch (err) {
       setError("লিংক ছোট করতে সমস্যা হয়েছে। ডাটাবেজ চেক করুন।");
     } finally {
@@ -375,7 +365,7 @@ export default function Home() {
     }
   };
 
-  // ১১. সরাসরি তালিকা থেকে নোট এডিট করা
+  // ট্যাগ/নোট এডিট
   const handleUpdateNote = async (linkId) => {
     try {
       const docRef = doc(db, "links", linkId);
@@ -389,7 +379,7 @@ export default function Home() {
     }
   };
 
-  // ১২. লিংক ডিলিট করা
+  // লিংক ডিলিট
   const handleDeleteLink = async (linkId) => {
     if (confirm("আপনি কি নিশ্চিতভাবে এই শর্ট লিংকটি ডিলিট করতে চান?")) {
       try {
@@ -401,14 +391,14 @@ export default function Home() {
     }
   };
 
-  // ১৩. কপি টু ক্লিপবোর্ড
+  // কপি টু ক্লিপবোর্ড
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ১৪. লগআউট
+  // লগআউট
   const handleLogout = () => {
     localStorage.removeItem("url_user_phone");
     setUserPhone("");
@@ -418,7 +408,6 @@ export default function Home() {
     setUserLinks([]);
   };
 
-  // ১৫. রিডাইরেক্টিং স্ক্রিন
   if (isRedirecting) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", backgroundColor: "#0f172a", color: "#f8fafc", fontFamily: "system-ui, sans-serif" }}>
@@ -577,7 +566,7 @@ export default function Home() {
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
             <span style={{ fontSize: "40px" }}>🔍</span>
-            <h2 style={{ margin: "12px 0 6px 0", fontSize: "24px", fontWeight: "700" }}>পাসওয়ার্ড রিসেট</h2>
+            <h2 style={{ margin: "12px 0 6px 0", fontSize: "24px", fontWeight: "700" }}>পাসওয়ার্ডরিসেট</h2>
             <p style={{ margin: "0", color: "#94a3b8", fontSize: "14px" }}>আপনার নিবন্ধিত হোয়াটসঅ্যাপ নম্বরে আমরা পাসওয়ার্ড পরিবর্তন কোড পাঠাবো।</p>
           </div>
 
@@ -638,7 +627,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* ৬. প্রধান ড্যাশবোর্ড ও হিস্টোরি স্ক্রিন (Dashboard) */}
+      {/* ৬. প্রধান ড্যাশবোর্ড ও হিস্টোরি স্ক্রিন */}
       {currentScreen === "dashboard" && (
         <div style={{ maxWidth: "900px", width: "100%", display: "flex", flexDirection: "column", gap: "24px" }}>
           
@@ -773,7 +762,7 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* আসল বড় লিংকটি দেখাচ্ছে */}
+                      {/* আসল বড় লিংক */}
                       <div style={{ fontSize: "12px", color: "#94a3b8", wordBreak: "break-all", borderTop: "1px solid rgba(255,255,255,0.03)", paddingTop: "8px" }}>
                         🔗 <strong>আসল লিংক:</strong> {link.originalUrl}
                       </div>
@@ -790,4 +779,3 @@ export default function Home() {
     </div>
   );
 }
-
