@@ -1,4 +1,3 @@
-
 "use client";
 import { useState, useEffect } from "react";
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -19,6 +18,15 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 export default function Home() {
+  // শর্ট লিংকের পাথ অ্যাক্টিভ আছে কিনা তা প্রথম রেন্ডারেই চেক করা (অপ্রত্যাশিত ফ্লিকারিং বন্ধের জন্য)
+  const [isPathActive, setIsPathActive] = useState(() => {
+    if (typeof window !== "undefined") {
+      const path = window.location.pathname.replace("/", "");
+      return path && path !== "";
+    }
+    return false;
+  });
+
   // নেভিগেশন ও স্ক্রিন কন্ট্রোল
   const [currentScreen, setCurrentScreen] = useState("login"); // 'login' | 'register' | 'forgot' | 'verify' | 'reset_password' | 'dashboard'
   const [userPhone, setUserPhone] = useState("");
@@ -42,7 +50,9 @@ export default function Home() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [copied, setCopied] = useState(false);
-  const [isRedirecting, setIsRedirecting] = useState(false);
+  
+  // ১৫ সেকেন্ড ডিলিট কাউন্টডাউন স্টেট
+  const [deletingItems, setDeletingItems] = useState({}); // { [linkId]: timeLeft }
   
   // ওটিপি ভেরিফিকেশন মেমোরি
   const [generatedOtp, setGeneratedOtp] = useState("");
@@ -50,28 +60,29 @@ export default function Home() {
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [tempNoteText, setTempNoteText] = useState("");
 
-  // ১. সেশন এবং রিডাইরেকশন হ্যান্ডলিং
+  // ১. ডিরেক্ট সাইলেন্ট রিডাইরেক্ট এবং সেশন ম্যানেজমেন্ট
   useEffect(() => {
     const path = window.location.pathname.replace("/", "");
     
     if (path && path !== "") {
-      setIsRedirecting(true);
-      const handleRedirect = async () => {
+      const handleSilentRedirect = async () => {
         try {
           const docRef = doc(db, "links", path.toLowerCase());
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
-            window.location.href = docSnap.data().originalUrl;
+            // কোনো মধ্যবর্তী স্ক্রিন ছাড়াই সরাসরি রিডাইরেক্ট
+            window.location.replace(docSnap.data().originalUrl);
           } else {
-            setError("৪৪৪ - দুঃখিত, এই শর্ট লিংকটি খুঁজে পাওয়া যায়নি!");
-            setIsRedirecting(false);
+            // লিংক পাওয়া না গেলে ড্যাশবোর্ড স্ক্রিনে ফিরিয়ে আনা এবং এরর দেখানো
+            setError("৪৪৪ - দুঃখিত, এই শর্ট লিংকটি আমাদের সার্ভারে পাওয়া যায়নি!");
+            setIsPathActive(false);
           }
         } catch (err) {
           setError("ডাটাবেজ কানেকশনে সমস্যা হয়েছে।");
-          setIsRedirecting(false);
+          setIsPathActive(false);
         }
       };
-      handleRedirect();
+      handleSilentRedirect();
     } else {
       const savedSession = localStorage.getItem("url_user_phone");
       if (savedSession) {
@@ -82,29 +93,64 @@ export default function Home() {
     }
   }, []);
 
-  // ২. ফোন নম্বর স্ট্যান্ডার্ডাইজেশন (১০১% নিখুঁত ফরম্যাটিং)
-  // এটি যেকোনো ফরম্যাট থেকে ১১ ডিজিটের স্ট্যান্ডার্ড '01XXXXXXXXX' বের করবে
+  // ২. ১৫ সেকেন্ড ডিলিট কাউন্টডাউন টাইমার ইফেক্ট (Undo System)
+  useEffect(() => {
+    const activeIds = Object.keys(deletingItems);
+    if (activeIds.length === 0) return;
+
+    const interval = setInterval(() => {
+      setDeletingItems((prev) => {
+        const next = { ...prev };
+        for (const id of Object.keys(next)) {
+          if (next[id] <= 1) {
+            // সময় শেষ হলে ডাটাবেজ থেকে আসল ডিলিট সম্পন্ন করা হবে
+            deleteDoc(doc(db, "links", id)).catch(err => console.error("ডিলিট এরর:", err));
+            delete next[id];
+            // লোকাল লিস্ট থেকেও তাৎক্ষণিক মুছে ফেলা
+            setUserLinks((current) => current.filter((item) => item.id !== id));
+          } else {
+            next[id] = next[id] - 1;
+          }
+        }
+        return next;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [deletingItems]);
+
+  // ডিলিট টাইমার স্টার্ট করা
+  const triggerDelete = (id) => {
+    setDeletingItems((prev) => ({ ...prev, [id]: 15 }));
+  };
+
+  // ডিলিট বাতিল (Undo) করা
+  const undoDelete = (id) => {
+    setDeletingItems((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  // ৩. ফোন নম্বর স্ট্যান্ডার্ডাইজেশন
   const cleanBDPhone = (phone) => {
-    let cleaned = phone.replace(/\D/g, ""); // সব নন-ডিজিট ক্যারেক্টার মুছে ফেলা
-    
-    // যদি নম্বরটি ৮৮০ দিয়ে শুরু হয় এবং মোট ১৩ ডিজিট হয়
+    let cleaned = phone.replace(/\D/g, ""); 
     if (cleaned.startsWith("880") && cleaned.length === 13) {
       cleaned = cleaned.substring(2);
     }
-    // যদি নম্বরটি ০ ছাড়া শুধু ১ দিয়ে শুরু হয় এবং ১০ ডিজিট হয়
     if (!cleaned.startsWith("0") && cleaned.length === 10) {
       cleaned = "0" + cleaned;
     }
     return cleaned;
   };
 
-  // এপিআই-এর জন্য '8801XXXXXXXXX' ফরম্যাট জেনারেট করা
   const getOtpFormattedPhone = (phone) => {
     const standard = cleanBDPhone(phone);
     return "88" + standard;
   };
 
-  // ৩. ড্যাশবোর্ড ডাটা লোড
+  // ৪. ব্যবহারকারীর লিংক হিস্টোরি রিড করা
   const fetchUserLinks = async (phone) => {
     try {
       const querySnapshot = await getDocs(collection(db, "links"));
@@ -118,44 +164,36 @@ export default function Home() {
       allLinks.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       setUserLinks(allLinks);
     } catch (err) {
-      console.error("হিস্টোরি লোড করা যায়নি:", err);
+      console.error("হিস্টোরি লোড করতে সমস্যা হয়েছে:", err);
     }
   };
 
-  // ৪. হোয়াটসঅ্যাপ এপিআই-এর মাধ্যমে ওটিপি পাঠানো (টেস্টারের লজিক অনুযায়ী)
+  // ৫. ওটিপি এপিআই কল করা
   const sendWhatsAppOTP = async (targetPhone, code) => {
     try {
-      // এপিআই-এর জন্য সঠিক ১৩ ডিজিট ফরম্যাট (যেমন: 8801572922663)
       const formattedPhone = getOtpFormattedPhone(targetPhone);
-      
-      console.log("Sending OTP to:", formattedPhone, "with code:", code);
-
       const response = await fetch("https://otp-api-hmrz.onrender.com/send-otp", {
         method: "POST",
-        headers: { 
-          "Content-Type": "application/json" 
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           phoneNumber: formattedPhone,
           otpCode: code
         })
       });
-
       return response.ok;
     } catch (err) {
-      console.error("ওটিপি পাঠাতে সমস্যা হয়েছে:", err);
+      console.error("ওটিপি এপিআই ত্রুটি:", err);
       return false;
     }
   };
 
-  // মোবাইল নম্বর সঠিক কি না পরীক্ষা করা
   const isValidBDPhone = (phone) => {
     const standard = cleanBDPhone(phone);
     const regex = /^(01[3-9]\d{8})$/;
     return regex.test(standard);
   };
 
-  // ৫. রেজিস্ট্রেশন সাবমিট ও ওটিপি ট্র্রিগার
+  // রেজিস্ট্রেশন সাবমিট
   const handleRegisterSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -180,7 +218,6 @@ export default function Home() {
     const standardizedPhone = cleanBDPhone(phoneInput);
 
     try {
-      // ফায়ারস্টোরে স্ট্যান্ডার্ড নাম্বারে চেক করা হচ্ছে
       const userRef = doc(db, "users", standardizedPhone);
       const userSnap = await getDoc(userRef);
 
@@ -190,7 +227,6 @@ export default function Home() {
         return;
       }
 
-      // ৬ ডিজিটের ওটিপি তৈরি
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
       setGeneratedOtp(otpCode);
       setOtpPurpose("register");
@@ -200,7 +236,7 @@ export default function Home() {
         setSuccess("আপনার হোয়াটসঅ্যাপ নম্বরে ৬ ডিজিটের কোড পাঠানো হয়েছে।");
         setCurrentScreen("verify");
       } else {
-        setError("ওটিপি পাঠাতে ব্যর্থ হয়েছে। অনুগ্রহ করে আপনার নম্বরটি ভালো করে চেক করুন।");
+        setError("ওটিপি পাঠাতে ব্যর্থ হয়েছে। অনুগ্রহ করে হোয়াটসঅ্যাপ চেক করুন।");
       }
     } catch (err) {
       setError("রেজিস্ট্রেশন প্রক্রিয়ায় সমস্যা হয়েছে।");
@@ -209,7 +245,7 @@ export default function Home() {
     }
   };
 
-  // ৬. ওটিপি কোড ভেরিফিকেশন ও আইডি তৈরি সম্পন্ন করা
+  // ওটিপি যাচাইকরণ
   const handleOtpVerify = async (e) => {
     e.preventDefault();
     setError("");
@@ -246,7 +282,7 @@ export default function Home() {
     }
   };
 
-  // ৭. লগইন হ্যান্ডলার
+  // লগইন প্রসেস
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
@@ -276,7 +312,7 @@ export default function Home() {
     }
   };
 
-  // ৮. পাসওয়ার্ড ভুলে গেলে ওটিপি পাঠানো
+  // পাসওয়ার্ড ভুলে যাওয়ার রিকভারি
   const handleForgotPassword = async (e) => {
     e.preventDefault();
     setError("");
@@ -318,7 +354,7 @@ export default function Home() {
     }
   };
 
-  // ৯. নতুন পাসওয়ার্ড সেভ করা
+  // নতুন পাসওয়ার্ড সংরক্ষণ
   const handlePasswordReset = async (e) => {
     e.preventDefault();
     setError("");
@@ -348,7 +384,7 @@ export default function Home() {
     }
   };
 
-  // ১০. লিংক ছোট করা
+  // শর্ট লিংক ক্রিয়েশন
   const handleCreateShortLink = async (e) => {
     e.preventDefault();
     setError("");
@@ -393,7 +429,7 @@ export default function Home() {
     }
   };
 
-  // ১১. সরাসরি নোট পরিবর্তন করা
+  // কাস্টম নোট আপডেট
   const handleUpdateNote = async (linkId) => {
     try {
       const docRef = doc(db, "links", linkId);
@@ -407,26 +443,14 @@ export default function Home() {
     }
   };
 
-  // ১২. লিংক ডিলিট
-  const handleDeleteLink = async (linkId) => {
-    if (confirm("আপনি কি নিশ্চিতভাবে এই শর্ট লিংকটি ডিলিট করতে চান?")) {
-      try {
-        await deleteDoc(doc(db, "links", linkId));
-        fetchUserLinks(userPhone);
-      } catch (err) {
-        setError("লিংকটি ডিলিট করা সম্ভব হয়নি।");
-      }
-    }
-  };
-
-  // ১৩. কপি টু ক্লিপবোর্ড
+  // কপি টু ক্লিপবোর্ড
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ১৪. লগআউট
+  // লগআউট
   const handleLogout = () => {
     localStorage.removeItem("url_user_phone");
     setUserPhone("");
@@ -436,27 +460,23 @@ export default function Home() {
     setUserLinks([]);
   };
 
-  if (isRedirecting) {
+  // ডিরেক্ট রিডাইরেক্টের জন্য সম্পূর্ণ ব্ল্যাঙ্ক ডার্ক স্ক্রিন (যাতে কোনো মধ্যবর্তী ট্রানজিশন স্ক্রিন বা টেক্সট দেখা না যায়)
+  if (isPathActive) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", backgroundColor: "#0f172a", color: "#f8fafc", fontFamily: "system-ui, sans-serif" }}>
-        <div style={{ width: "50px", height: "50px", border: "5px solid #334155", borderTop: "5px solid #38bdf8", borderRadius: "50%", animation: "spin 1s linear infinite" }}></div>
-        <h2 style={{ marginTop: "24px", fontWeight: "600" }}>🔄 মূল ওয়েবসাইটে নিয়ে যাওয়া হচ্ছে...</h2>
-        <p style={{ color: "#94a3b8", marginTop: "8px" }}>অনুগ্রহ করে একটু অপেক্ষা করুন।</p>
-        <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-      </div>
+      <div style={{ minHeight: "100vh", backgroundColor: "#0f172a" }}></div>
     );
   }
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", fontFamily: "system-ui, sans-serif", boxSizing: "border-box", color: "#f8fafc" }}>
       
-      {/* লগইন স্ক্রিন */}
+      {/* ১. লগইন স্ক্রিন */}
       {currentScreen === "login" && (
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
             <span style={{ fontSize: "40px" }}>🔐</span>
             <h2 style={{ margin: "12px 0 6px 0", fontSize: "24px", fontWeight: "700" }}>লগইন করুন</h2>
-            <p style={{ margin: "0", color: "#94a3b8", fontSize: "14px" }}>আপনার শর্ট লিংকগুলোর হিস্টোরি আজীবন সেভ রাখতে দয়া করে আইডি লগইন করুন।</p>
+            <p style={{ margin: "0", color: "#94a3b8", fontSize: "14px" }}>আপনার হিস্টোরিগুলো সুরক্ষিত রাখতে দয়া করে আইডি লগইন করুন।</p>
           </div>
 
           <form onSubmit={handleLogin}>
@@ -498,7 +518,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* রেজিস্ট্রেশন স্ক্রিন */}
+      {/* ২. রেজিস্ট্রেশন স্ক্রিন */}
       {currentScreen === "register" && (
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
@@ -557,7 +577,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* ওটিপি ভেরিফিকেশন স্ক্রিন */}
+      {/* ৩. ওটিপি ভেরিফিকেশন স্ক্রিন */}
       {currentScreen === "verify" && (
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
@@ -589,7 +609,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* পাসওয়ার্ড ভুলে যাওয়ার স্ক্রিন */}
+      {/* ৪. পাসওয়ার্ড ভুলে যাওয়ার স্ক্রিন */}
       {currentScreen === "forgot" && (
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
@@ -624,7 +644,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* নতুন পাসওয়ার্ড সেট করার স্ক্রিন */}
+      {/* ৫. নতুন পাসওয়ার্ড সেট করার স্ক্রিন */}
       {currentScreen === "reset_password" && (
         <div style={{ maxWidth: "450px", width: "100%", background: "rgba(30, 41, 59, 0.7)", backdropFilter: "blur(16px)", padding: "32px", borderRadius: "24px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.3)", border: "1px solid rgba(255, 255, 255, 0.1)" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
@@ -655,7 +675,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* প্রধান ড্যাশবোর্ড ও হিস্টোরি স্ক্রিন */}
+      {/* ৬. ড্যাশবোর্ড ও হিস্টোরি স্ক্রিন */}
       {currentScreen === "dashboard" && (
         <div style={{ maxWidth: "900px", width: "100%", display: "flex", flexDirection: "column", gap: "24px" }}>
           
@@ -751,51 +771,78 @@ export default function Home() {
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                  {userLinks.map((link) => (
-                    <div key={link.id} style={{ backgroundColor: "rgba(15, 23, 42, 0.4)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "14px", padding: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
+                  {userLinks.map((link) => {
+                    const isDeleting = deletingItems[link.id] !== undefined;
+                    const timeLeft = deletingItems[link.id];
+
+                    return (
+                      <div key={link.id} style={{ backgroundColor: "rgba(15, 23, 42, 0.4)", border: isDeleting ? "1px dashed #f59e0b" : "1px solid rgba(255,255,255,0.05)", borderRadius: "14px", padding: "16px", display: "flex", flexDirection: "column", gap: "10px", transition: "all 0.3s ease" }}>
                         
-                        {/* ট্যাগ বা কাস্টম নোট ও শর্ট লিংক */}
-                        <div style={{ flex: "1" }}>
-                          {editingNoteId === link.id ? (
-                            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-                              <input
-                                type="text"
-                                value={tempNoteText}
-                                onChange={(e) => setTempNoteText(e.target.value)}
-                                style={{ padding: "4px 8px", backgroundColor: "rgba(15, 23, 42, 0.9)", border: "1px solid #38bdf8", borderRadius: "6px", color: "white", fontSize: "13px" }}
-                              />
-                              <button onClick={() => handleUpdateNote(link.id)} style={{ padding: "4px 8px", backgroundColor: "#22c55e", color: "white", border: "none", borderRadius: "6px", fontSize: "12px", cursor: "pointer" }}>সেভ</button>
-                              <button onClick={() => setEditingNoteId(null)} style={{ padding: "4px 8px", backgroundColor: "#ef4444", color: "white", border: "none", borderRadius: "6px", fontSize: "12px", cursor: "pointer" }}>বাতিল</button>
-                            </div>
-                          ) : (
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
-                              <span style={{ backgroundColor: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", padding: "3px 10px", borderRadius: "6px", fontSize: "12px", fontWeight: "600" }}>
-                                📌 {link.title || "কাস্টম লিংক"}
+                        {isDeleting ? (
+                          /* ১৫ সেকেন্ডের ডিলিট কাউন্টডাউন এবং Undo UI */
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "rgba(245, 158, 11, 0.1)", padding: "12px 16px", borderRadius: "10px", border: "1px solid rgba(245, 158, 11, 0.2)" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                              <span style={{ animation: "pulse 1s infinite" }}>⚠️</span>
+                              <span style={{ fontSize: "14px", fontWeight: "600", color: "#f59e0b" }}>
+                                {timeLeft} সেকেন্ডের মধ্যে লিংকটি চিরতরে ডিলিট হয়ে যাবে!
                               </span>
-                              <button onClick={() => { setEditingNoteId(link.id); setTempNoteText(link.title || ""); }} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "12px", textDecoration: "underline" }}>এডিট করুন ✏️</button>
                             </div>
-                          )}
+                            <button 
+                              onClick={() => undoDelete(link.id)} 
+                              style={{ padding: "6px 14px", backgroundColor: "#10b981", color: "white", border: "none", borderRadius: "8px", fontSize: "13px", fontWeight: "bold", cursor: "pointer", boxShadow: "0 0 10px rgba(16, 185, 129, 0.4)" }}
+                            >
+                              বাতিল করুন (Undo) ↩️
+                            </button>
+                          </div>
+                        ) : (
+                          /* সাধারণ হিস্টোরি UI */
+                          <>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
+                              
+                              {/* ট্যাগ বা কাস্টম নোট ও শর্ট লিংক */}
+                              <div style={{ flex: "1" }}>
+                                {editingNoteId === link.id ? (
+                                  <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+                                    <input
+                                      type="text"
+                                      value={tempNoteText}
+                                      onChange={(e) => setTempNoteText(e.target.value)}
+                                      style={{ padding: "4px 8px", backgroundColor: "rgba(15, 23, 42, 0.9)", border: "1px solid #38bdf8", borderRadius: "6px", color: "white", fontSize: "13px" }}
+                                    />
+                                    <button onClick={() => handleUpdateNote(link.id)} style={{ padding: "4px 8px", backgroundColor: "#22c55e", color: "white", border: "none", borderRadius: "6px", fontSize: "12px", cursor: "pointer" }}>সেভ</button>
+                                    <button onClick={() => setEditingNoteId(null)} style={{ padding: "4px 8px", backgroundColor: "#ef4444", color: "white", border: "none", borderRadius: "6px", fontSize: "12px", cursor: "pointer" }}>বাতিল</button>
+                                  </div>
+                                ) : (
+                                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
+                                    <span style={{ backgroundColor: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", padding: "3px 10px", borderRadius: "6px", fontSize: "12px", fontWeight: "600" }}>
+                                      📌 {link.title || "কাস্টম লিংক"}
+                                    </span>
+                                    <button onClick={() => { setEditingNoteId(link.id); setTempNoteText(link.title || ""); }} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "12px", textDecoration: "underline" }}>এডিট করুন ✏️</button>
+                                  </div>
+                                )}
 
-                          {/* ছোট লিংক */}
-                          <a href={`${window.location.origin}/${link.id}`} target="_blank" rel="noreferrer" style={{ color: "#38bdf8", fontWeight: "700", textDecoration: "none", fontSize: "15px", wordBreak: "break-all" }}>
-                            {window.location.origin}/{link.id}
-                          </a>
-                        </div>
+                                {/* ছোট লিংক */}
+                                <a href={`${window.location.origin}/${link.id}`} target="_blank" rel="noreferrer" style={{ color: "#38bdf8", fontWeight: "700", textDecoration: "none", fontSize: "15px", wordBreak: "break-all" }}>
+                                  {window.location.origin}/{link.id}
+                                </a>
+                              </div>
 
-                        {/* অ্যাকশন বাটনসমূহ */}
-                        <div style={{ display: "flex", gap: "8px" }}>
-                          <button onClick={() => copyToClipboard(`${window.location.origin}/${link.id}`)} style={{ padding: "6px 12px", backgroundColor: "#334155", color: "white", border: "none", borderRadius: "8px", fontSize: "12px", fontWeight: "600", cursor: "pointer" }}>কপি</button>
-                          <button onClick={() => handleDeleteLink(link.id)} style={{ padding: "6px 12px", backgroundColor: "rgba(239, 68, 68, 0.12)", color: "#fca5a5", border: "1px solid rgba(239, 68, 68, 0.15)", borderRadius: "8px", fontSize: "12px", fontWeight: "600", cursor: "pointer" }}>ডিলিট 🗑️</button>
-                        </div>
+                              {/* অ্যাকশন বাটনসমূহ */}
+                              <div style={{ display: "flex", gap: "8px" }}>
+                                <button onClick={() => copyToClipboard(`${window.location.origin}/${link.id}`)} style={{ padding: "6px 12px", backgroundColor: "#334155", color: "white", border: "none", borderRadius: "8px", fontSize: "12px", fontWeight: "600", cursor: "pointer" }}>কপি</button>
+                                <button onClick={() => triggerDelete(link.id)} style={{ padding: "6px 12px", backgroundColor: "rgba(239, 68, 68, 0.12)", color: "#fca5a5", border: "1px solid rgba(239, 68, 68, 0.15)", borderRadius: "8px", fontSize: "12px", fontWeight: "600", cursor: "pointer" }}>ডিলিট 🗑️</button>
+                              </div>
+                            </div>
+
+                            {/* আসল বড় লিংক */}
+                            <div style={{ fontSize: "12px", color: "#94a3b8", wordBreak: "break-all", borderTop: "1px solid rgba(255,255,255,0.03)", paddingTop: "8px" }}>
+                              🔗 <strong>আসল লিংক:</strong> {link.originalUrl}
+                            </div>
+                          </>
+                        )}
                       </div>
-
-                      {/* আসল বড় লিংক */}
-                      <div style={{ fontSize: "12px", color: "#94a3b8", wordBreak: "break-all", borderTop: "1px solid rgba(255,255,255,0.03)", paddingTop: "8px" }}>
-                        🔗 <strong>আসল লিংক:</strong> {link.originalUrl}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -804,6 +851,13 @@ export default function Home() {
         </div>
       )}
 
+      {/* অ্যানিমেশনের জন্য স্টাইল ট্যাগ */}
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(1.05); }
+        }
+      `}</style>
     </div>
   );
 }
